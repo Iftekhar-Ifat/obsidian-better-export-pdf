@@ -1,11 +1,12 @@
 import electron, { type WebviewTag } from "electron";
 import * as fs from "fs/promises";
 import { type FrontMatterCache } from "obsidian";
-import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFRef, StandardFonts } from "pdf-lib";
+import { PDFArray, rgb, PDFDict, PDFDocument, PDFHexString, PDFName, PDFRef, StandardFonts, PDFImage } from "pdf-lib";
 
 import type { BetterExportPdfPluginSettings } from "./main";
 import type { DocType, PageSizeType, TConfig } from "./modal";
 import { TreeNode, getHeadingTree, safeParseFloat, safeParseInt } from "./utils";
+import path from "path";
 
 interface TPosition {
   [key: string]: number[];
@@ -319,23 +320,100 @@ export type EditPDFParamType = {
 };
 
 // add outlines
+
 export async function editPDF(
   data: Uint8Array,
   { headings, maxLevel, frontMatter, displayMetadata }: EditPDFParamType,
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.load(data);
-  const posistions = await getDestPosition(pdfDoc);
+  const positions = await getDestPosition(pdfDoc);
+  setAnchors(pdfDoc, positions);
 
-  setAnchors(pdfDoc, posistions);
+  const LOGO_PATH =
+    "C:\\Users\\User\\Documents\\Obsidian Vault\\Iftekhar's Vault\\.obsidian\\plugins\\better-export-pdf\\logo.png";
 
-  const outlines = generateOutlines(headings, posistions, maxLevel);
+  let logoImage: PDFImage | undefined;
 
-  setOutline(pdfDoc, outlines);
-  if (displayMetadata) {
-    setMetadata(pdfDoc, frontMatter ?? {});
+  try {
+    const imageBytes = await fs.readFile(LOGO_PATH);
+    logoImage = await pdfDoc.embedPng(imageBytes);
+  } catch (err) {
+    console.error("Error loading logo image:", err, "Path tried:", LOGO_PATH);
   }
-  data = await pdfDoc.save();
-  return data;
+
+  const mm2pt = (mm: number) => (mm * 72) / 25.4;
+  const { top = 15, bottom = 20, left = 10, right = 10 } = {};
+
+  for (const page of pdfDoc.getPages()) {
+    const { width, height } = page.getSize();
+    const dark = rgb(30 / 255, 30 / 255, 30 / 255);
+
+    // Existing margin rectangles
+    if (top)
+      page.drawRectangle({
+        x: 0,
+        y: height - mm2pt(top),
+        width,
+        height: mm2pt(top),
+        color: dark,
+      });
+
+    if (bottom)
+      page.drawRectangle({
+        x: 0,
+        y: 0,
+        width,
+        height: mm2pt(bottom),
+        color: dark,
+      });
+
+    if (left)
+      page.drawRectangle({
+        x: 0,
+        y: mm2pt(bottom),
+        width: mm2pt(left),
+        height: height - mm2pt(top + bottom),
+        color: dark,
+      });
+
+    if (right)
+      page.drawRectangle({
+        x: width - mm2pt(right),
+        y: mm2pt(bottom),
+        width: mm2pt(right),
+        height: height - mm2pt(top + bottom),
+        color: dark,
+      });
+
+    // Add logo to bottom-right corner
+    if (logoImage) {
+      const imgWidth = 60;
+      const imgHeight = logoImage.height * (imgWidth / logoImage.width); // Maintain aspect ratio
+
+      page.drawImage(logoImage, {
+        x: width - imgWidth - 10, // 10 points from right edge
+        y: 10, // 10 points from bottom edge
+        width: imgWidth,
+        height: imgHeight,
+      });
+    }
+
+    // Maintain content stream order
+    const contents = page.node.get(PDFName.of("Contents"));
+    if (contents instanceof PDFArray && contents.size() > 1) {
+      const lastIndex = contents.size() - 1;
+      const bgStreamRef = contents.get(lastIndex);
+      contents.remove(lastIndex);
+      contents.insert(0, bgStreamRef);
+    }
+  }
+
+  // Existing outline and metadata logic
+  const outlines = generateOutlines(headings, positions, maxLevel);
+  setOutline(pdfDoc, outlines);
+  if (displayMetadata) setMetadata(pdfDoc, frontMatter ?? {});
+
+  return await pdfDoc.save();
 }
 
 // add pdf metadata [title, author, keywords, created_at, updated_at, creator, producer]

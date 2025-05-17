@@ -45,7 +45,8 @@ const context = await esbuild.context({
   logLevel: "info",
   sourcemap: prod ? false : "inline",
   treeShaking: true,
-  outfile: "main.js",
+  outfile:
+    "C:\\Users\\User\\Documents\\Obsidian Vault\\Iftekhar's Vault\\.obsidian\\plugins\\better-export-pdf\\main.js",
   define: {
     "process.env.NODE_ENV": prod ? "'production'" : "'development'",
   },
